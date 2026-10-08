@@ -5,7 +5,7 @@ summary: 了解 INFORMATION_SCHEMA 表 `SLOW_QUERY`。
 
 # SLOW_QUERY
 
-`SLOW_QUERY` 表中提供了当前节点的慢查询相关的信息，其内容通过解析当前节点的 TiDB [慢查询日志](/tidb-configuration-file.md#slow-query-file)而来，大部分列名与慢日志中的字段名对应；部分列（如 `Cop_backoff_types`）由多个日志字段派生而来。关于如何使用该表调查和改善慢查询，请参考[慢查询日志文档](/identify-slow-queries.md)。
+`SLOW_QUERY` 表中提供了当前节点的慢查询相关的信息，其内容通过解析当前节点的 TiDB [慢查询日志](/tidb-configuration-file.md#slow-query-file)而来，大部分列名与慢日志中的字段名对应。关于如何使用该表调查和改善慢查询，请参考[慢查询日志文档](/identify-slow-queries.md)。
 
 ```sql
 USE INFORMATION_SCHEMA;
@@ -110,7 +110,6 @@ DESC slow_query;
 | Query                                      | longtext        | YES  |      | NULL    |       |
 | Prewrite_Backoff_types                     | varchar(1024)   | YES  |      | NULL    |       |
 | Commit_Backoff_types                       | varchar(1024)   | YES  |      | NULL    |       |
-| Cop_backoff_types                          | varchar(1024)   | YES  |      | NULL    |       |
 +--------------------------------------------+-----------------+------+------+---------+-------+
 ```
 
@@ -122,21 +121,20 @@ DESC slow_query;
 
 <!-- TODO: confirm the first release containing pingcap/tidb#70833 before publishing to a release branch. -->
 
-以下列提供不同执行阶段记录的 backoff 类型。三列的类型均为 `VARCHAR(1024)`，并按下表顺序追加在 `SLOW_QUERY` 和 `CLUSTER_SLOW_QUERY` 的 `Query` 列之后。
+以下列提供事务提交两阶段记录的 backoff 类型。两列的类型均为 `VARCHAR(1024)`，并按下表顺序追加在 `SLOW_QUERY` 和 `CLUSTER_SLOW_QUERY` 的 `Query` 列之后。
 
 | 列名 | 来源与范围 |
 | --- | --- |
 | `Prewrite_Backoff_types` | 来自慢日志的 `Prewrite_Backoff_types` 字段，记录累计 backoff 时间最长的 prewrite batch 中的类型，不包含所有 prewrite batch 的类型。 |
 | `Commit_Backoff_types` | 来自慢日志的 `Commit_Backoff_types` 字段，记录 commit 阶段的 backoff 类型。 |
-| `Cop_backoff_types` | 从慢日志的 `Cop_backoff_{type}_total_times` 字段派生，TiDB 对这些字段中的类型去重并排序。 |
 
 这些值是以方括号包裹、以空格分隔类型的字符串，例如 `[txnLock]` 或 `[regionMiss txnLockFast]`，并非 JSON 数组。`Prewrite_Backoff_types` 和 `Commit_Backoff_types` 保留对应日志字段中的类型顺序和重复值。
 
-如果一条日志记录中缺少对应字段，这些列返回空字符串 (`''`)，而非 SQL `NULL`。空字符串不能证明该语句没有发生 backoff。这些列不提供 `Point_Get` 请求或独立的悲观事务 `LockKeys` 请求的 backoff 类型。
+如果一条日志记录中缺少对应字段，这些列返回空字符串 (`''`)，而非 SQL `NULL`。空字符串不能证明该语句没有发生 backoff。这些列不提供 coprocessor 任务、`Point_Get` 请求或独立的悲观事务 `LockKeys` 请求的 backoff 类型；coprocessor 阶段的类型仍可在 `Backoff_Detail` 列中查看（该列拼接了记录中的 `Cop_backoff_{type}_*` 明细行）。
 
-现有的 `Backoff_types` 列继续解析历史日志中的 `Backoff_types` 字段。TiDB 不会将新增三列合并到该列，因此仅包含分阶段字段的日志记录，其 `Backoff_types` 值可能为空。已有日志文件只要包含相关字段，就可以解析出新增列的值，无需重写日志。
+现有的 `Backoff_types` 列继续解析历史日志中的 `Backoff_types` 字段。TiDB 不会将新增两列合并到该列，因此仅包含分阶段字段的日志记录，其 `Backoff_types` 值可能为空。已有日志文件只要包含相关字段，就可以解析出新增列的值，无需重写日志。
 
-新增列会增加 `SELECT *` 返回的列数，`Query` 不再是最后一列。如果客户端依赖列位置或固定列数，请使用显式列清单。筛选示例见[按 coprocessor backoff 类型筛选](/identify-slow-queries.md#按-coprocessor-backoff-类型筛选)。
+新增列会增加 `SELECT *` 返回的列数，`Query` 不再是最后一列。如果客户端依赖列位置或固定列数，请使用显式列清单。筛选示例见[按事务 backoff 类型筛选](/identify-slow-queries.md#按事务-backoff-类型筛选)。
 
 ## CLUSTER_SLOW_QUERY table
 
@@ -247,7 +245,6 @@ DESC CLUSTER_SLOW_QUERY;
 | Query                                      | longtext        | YES  |      | NULL    |       |
 | Prewrite_Backoff_types                     | varchar(1024)   | YES  |      | NULL    |       |
 | Commit_Backoff_types                       | varchar(1024)   | YES  |      | NULL    |       |
-| Cop_backoff_types                          | varchar(1024)   | YES  |      | NULL    |       |
 +--------------------------------------------+-----------------+------+------+---------+-------+
 ```
 

@@ -415,19 +415,18 @@ TiDB 4.0 中新增了 [`CLUSTER_SLOW_QUERY`](/information-schema/information-sch
 
 ## 查询 `SLOW_QUERY`/`CLUSTER_SLOW_QUERY` 示例
 
-### 按 coprocessor backoff 类型筛选
+### 按事务 backoff 类型筛选
 
-要查找最近一小时发生 `txnLockFast` coprocessor backoff 的慢查询，可以查询 [`Cop_backoff_types` 列](/information-schema/information-schema-slow-query.md#backoff-类型列)：
+要查找最近一小时事务提交阶段发生 `txnLock` backoff 的慢查询，可以查询 [`Prewrite_Backoff_types` 和 `Commit_Backoff_types` 列](/information-schema/information-schema-slow-query.md#backoff-类型列)：
 
 ```sql
-SELECT time, query, cop_backoff_types
+SELECT time, query, prewrite_backoff_types, commit_backoff_types
 FROM information_schema.slow_query
 WHERE time >= NOW() - INTERVAL 1 HOUR
-  AND CONCAT(' ', REPLACE(REPLACE(cop_backoff_types, '[', ''), ']', ''), ' ')
-      LIKE '% txnLockFast %';
+  AND commit_backoff_types LIKE '%txnLock%';
 ```
 
-匹配模式中的空格用于匹配方括号字符串中的完整 backoff 类型。类型列为空不能排除其他执行路径发生 backoff。`Cop_backoff_types` 是 TiDB 解析日志时派生的列，不是单独写入慢日志的字段。使用 `CLUSTER_SLOW_QUERY` 查询所有节点前，请先确认[滚动升级期间的查询要求](/information-schema/information-schema-slow-query.md#cluster_slow_query-table)。
+类型列为空不能排除其他阶段或路径发生 backoff：coprocessor 阶段的类型仍可在同一行的 `Backoff_Detail` 列中查看，`Point_Get` 请求的 backoff 只体现在 `Backoff_total` 中。使用 `CLUSTER_SLOW_QUERY` 查询所有节点前，请先确认[滚动升级期间的查询要求](/information-schema/information-schema-slow-query.md#cluster_slow_query-table)。
 
 ### 搜索 Top N 的慢查询
 
