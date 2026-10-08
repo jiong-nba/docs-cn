@@ -5,14 +5,14 @@ summary: 了解 INFORMATION_SCHEMA 表 `SLOW_QUERY`。
 
 # SLOW_QUERY
 
-`SLOW_QUERY` 表中提供了当前节点的慢查询相关的信息，其内容通过解析当前节点的 TiDB [慢查询日志](/tidb-configuration-file.md#slow-query-file)而来，列名和慢日志中的字段名是一一对应。关于如何使用该表调查和改善慢查询，请参考[慢查询日志文档](/identify-slow-queries.md)。
+`SLOW_QUERY` 表中提供了当前节点的慢查询相关的信息，其内容通过解析当前节点的 TiDB [慢查询日志](/tidb-configuration-file.md#slow-query-file)而来，大部分列名与慢日志中的字段名对应；部分列（如 `Cop_backoff_types`）由多个日志字段派生而来。关于如何使用该表调查和改善慢查询，请参考[慢查询日志文档](/identify-slow-queries.md)。
 
 ```sql
 USE INFORMATION_SCHEMA;
 DESC slow_query;
 ```
 
-输出结果示例如下：
+以下输出为节选，省略了 `Query` 之前的部分列：
 
 ```sql
 +--------------------------------------------+-----------------+------+------+---------+-------+
@@ -108,23 +108,47 @@ DESC slow_query;
 | Prev_stmt                                  | longtext        | YES  |      | NULL    |       |
 | Session_connect_attrs                      | json            | YES  |      | NULL    |       |
 | Query                                      | longtext        | YES  |      | NULL    |       |
+| Prewrite_Backoff_types                     | varchar(1024)   | YES  |      | NULL    |       |
+| Commit_Backoff_types                       | varchar(1024)   | YES  |      | NULL    |       |
+| Cop_backoff_types                          | varchar(1024)   | YES  |      | NULL    |       |
 +--------------------------------------------+-----------------+------+------+---------+-------+
-90 rows in set (0.00 sec)
 ```
 
 `Query` 列的语句长度上限由系统变量 [`tidb_stmt_summary_max_sql_length`](/system-variables.md#tidb_stmt_summary_max_sql_length-从-v40-版本开始引入) 控制。
 
 `Session_connect_attrs` 列以 JSON 格式存储从慢日志解析出的会话连接属性。TiDB 通过 [`performance_schema_session_connect_attrs_size`](/system-variables.md#performance_schema_session_connect_attrs_size-从-v857-和-v900-版本开始引入) 系统变量来控制写入此字段的最大负载大小。
 
+## backoff 类型列
+
+<!-- TODO: confirm the first release containing pingcap/tidb#70833 before publishing to a release branch. -->
+
+以下列提供不同执行阶段记录的 backoff 类型。三列的类型均为 `VARCHAR(1024)`，并按下表顺序追加在 `SLOW_QUERY` 和 `CLUSTER_SLOW_QUERY` 的 `Query` 列之后。
+
+| 列名 | 来源与范围 |
+| --- | --- |
+| `Prewrite_Backoff_types` | 来自慢日志的 `Prewrite_Backoff_types` 字段，记录累计 backoff 时间最长的 prewrite batch 中的类型，不包含所有 prewrite batch 的类型。 |
+| `Commit_Backoff_types` | 来自慢日志的 `Commit_Backoff_types` 字段，记录 commit 阶段的 backoff 类型。 |
+| `Cop_backoff_types` | 从慢日志的 `Cop_backoff_{type}_total_times` 字段派生，TiDB 对这些字段中的类型去重并排序。 |
+
+这些值是以方括号包裹、以空格分隔类型的字符串，例如 `[txnLock]` 或 `[regionMiss txnLockFast]`，并非 JSON 数组。`Prewrite_Backoff_types` 和 `Commit_Backoff_types` 保留对应日志字段中的类型顺序和重复值。
+
+如果一条日志记录中缺少对应字段，这些列返回空字符串 (`''`)，而非 SQL `NULL`。空字符串不能证明该语句没有发生 backoff。这些列不提供 `Point_Get` 请求或独立的悲观事务 `LockKeys` 请求的 backoff 类型。
+
+现有的 `Backoff_types` 列继续解析历史日志中的 `Backoff_types` 字段。TiDB 不会将新增三列合并到该列，因此仅包含分阶段字段的日志记录，其 `Backoff_types` 值可能为空。已有日志文件只要包含相关字段，就可以解析出新增列的值，无需重写日志。
+
+新增列会增加 `SELECT *` 返回的列数，`Query` 不再是最后一列。如果客户端依赖列位置或固定列数，请使用显式列清单。筛选示例见[按 coprocessor backoff 类型筛选](/identify-slow-queries.md#按-coprocessor-backoff-类型筛选)。
+
 ## CLUSTER_SLOW_QUERY table
 
 `CLUSTER_SLOW_QUERY` 表中提供了集群所有节点的慢查询相关的信息，其内容通过解析 TiDB 慢查询日志而来，该表使用上和 `SLOW_QUERY` 表一样。`CLUSTER_SLOW_QUERY` 表结构上比 `SLOW_QUERY` 多一列 `INSTANCE`，表示该行慢查询信息来自的 TiDB 节点地址。关于如何使用该表调查和改善慢查询，请参考[慢查询日志文档](/identify-slow-queries.md)。
+
+跨越新增 backoff 类型列的版本进行滚动升级时，在所有 TiDB 节点均支持新列之前，请避免从 `CLUSTER_SLOW_QUERY` 选择这些新列。新版本节点向旧版本节点请求新列（包括通过 `SELECT *`）时，可能报错 `Column ID <id> of table <table> not found`。升级窗口内，请显式选择所有节点均支持的列。在新版本节点上查询本地 `SLOW_QUERY` 表，不要求其他节点支持新列。
 
 ```sql
 DESC CLUSTER_SLOW_QUERY;
 ```
 
-输出结果示例如下：
+以下输出为节选，省略了 `Query` 之前的部分列：
 
 ```sql
 +--------------------------------------------+-----------------+------+------+---------+-------+
@@ -221,8 +245,10 @@ DESC CLUSTER_SLOW_QUERY;
 | Prev_stmt                                  | longtext        | YES  |      | NULL    |       |
 | Session_connect_attrs                      | json            | YES  |      | NULL    |       |
 | Query                                      | longtext        | YES  |      | NULL    |       |
+| Prewrite_Backoff_types                     | varchar(1024)   | YES  |      | NULL    |       |
+| Commit_Backoff_types                       | varchar(1024)   | YES  |      | NULL    |       |
+| Cop_backoff_types                          | varchar(1024)   | YES  |      | NULL    |       |
 +--------------------------------------------+-----------------+------+------+---------+-------+
-91 rows in set (0.00 sec)
 ```
 
 查询集群系统表时，TiDB 也会将相关计算下推给其他节点执行，而不是把所有节点的数据都取回来，可以查看执行计划，如下：
