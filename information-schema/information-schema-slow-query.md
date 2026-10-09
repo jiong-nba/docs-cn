@@ -132,7 +132,11 @@ DESC slow_query;
 
 如果一条日志记录中缺少对应字段，这些列返回空字符串 (`''`)，而非 SQL `NULL`。空字符串不能证明该语句没有发生 backoff。这些列不提供 coprocessor 任务、`Point_Get` 请求或独立的悲观事务 `LockKeys` 请求的 backoff 类型；coprocessor 阶段的类型仍可在 `Backoff_Detail` 列中查看（该列拼接了记录中的 `Cop_backoff_{type}_*` 明细行）。
 
-现有的 `Backoff_types` 列继续解析历史日志中的 `Backoff_types` 字段。TiDB 不会将新增两列合并到该列，因此仅包含分阶段字段的日志记录，其 `Backoff_types` 值可能为空。已有日志文件只要包含相关字段，就可以解析出新增列的值，无需重写日志。
+现有的 `Backoff_types` 列提供事务 backoff 类型概要。如果一条日志记录包含原始 `Backoff_types` 字段，TiDB 保留其值，包括空字符串和 `[]`。否则，TiDB 按记录中的 prewrite 类型在前、commit 类型在后的顺序拼接列表。例如，`[txnLock txnLock]` 和 `[regionMiss]` 会得到 `[txnLock txnLock regionMiss]`。概要保留类型的顺序、大小写和重复项，并非集合或重试次数映射。
+
+此读侧回填恢复了历史的列表组合方式，不包含阶段字段未记录的 coprocessor、`Point_Get`、独立 `LockKeys` 或后台 commit 的 backoff。列表顺序不保证事件的时间顺序，重复项数量也不代表该语句的全部重试次数。未记录类型时，派生值为空字符串。阶段列表格式异常或键值行解析失败时，解析器不进行回填，并产生解析警告；原始 `Backoff_types` 值仍然优先。
+
+已有日志文件只要包含相关字段，就可以解析出阶段列及概要的值，无需重写日志。回填发生在 TiDB 慢查询表的解析器中，即使只选择 `Backoff_types`，或只在过滤条件中使用该列，也会执行。此行为不会修改原始日志文件，也不会为直接读取这些文件的管道补充字段。解析器保留完整的派生列表，不会按现有 `VARCHAR(64)` 元数据长度截断；客户端若施加固定长度限制，需要验证其对较长值的处理方式。
 
 新增列会增加 `SELECT *` 返回的列数，`Query` 不再是最后一列。如果客户端依赖列位置或固定列数，请使用显式列清单。筛选示例见[按事务 backoff 类型筛选](/identify-slow-queries.md#按事务-backoff-类型筛选)。
 
@@ -141,6 +145,8 @@ DESC slow_query;
 `CLUSTER_SLOW_QUERY` 表中提供了集群所有节点的慢查询相关的信息，其内容通过解析 TiDB 慢查询日志而来，该表使用上和 `SLOW_QUERY` 表一样。`CLUSTER_SLOW_QUERY` 表结构上比 `SLOW_QUERY` 多一列 `INSTANCE`，表示该行慢查询信息来自的 TiDB 节点地址。关于如何使用该表调查和改善慢查询，请参考[慢查询日志文档](/identify-slow-queries.md)。
 
 跨越新增 backoff 类型列的版本进行滚动升级时，在所有 TiDB 节点均支持新列之前，请避免从 `CLUSTER_SLOW_QUERY` 选择这些新列。新版本节点向旧版本节点请求新列（包括通过 `SELECT *`）时，可能报错 `Column ID <id> of table <table> not found`。升级窗口内，请显式选择所有节点均支持的列。在新版本节点上查询本地 `SLOW_QUERY` 表，不要求其他节点支持新列。
+
+`Backoff_types` 列仍然可用，但其值也取决于解析器版本。对于同一条仅包含阶段字段的日志，旧解析器可能返回 `''`，支持回填的解析器则返回派生的事务概要。因此，滚动升级期间 `CLUSTER_SLOW_QUERY` 可能同时包含空值与派生值。使用该列的过滤、聚合和告警结果会随节点升级而变化；列存在并不能保证每个节点都支持回填。
 
 ```sql
 DESC CLUSTER_SLOW_QUERY;
