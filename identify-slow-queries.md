@@ -428,8 +428,6 @@ WHERE time >= NOW() - INTERVAL 1 HOUR
 
 类型列为空不能排除其他阶段或路径发生 backoff：coprocessor 阶段的类型仍可在同一行的 `Backoff_Detail` 列中查看，`Point_Get` 请求的 backoff 只体现在 `Backoff_total` 中。使用 `CLUSTER_SLOW_QUERY` 查询所有节点前，请先确认[滚动升级期间的查询要求](/information-schema/information-schema-slow-query.md#cluster_slow_query-table)。
 
-现有 `Backoff_types` 列提供兼容的事务概要：解析器优先保留原始 `Backoff_types` 字段值；不存在该字段时，按记录中的 prewrite 类型在前、commit 类型在后的顺序派生列表。阶段列可以用于区分两个阶段。此回填不改变原始慢日志，直接解析日志文件的工具需要另行适配。滚动升级期间，旧解析器仍可能对仅包含阶段字段的日志返回空概要，因此使用 `Backoff_types` 的过滤和聚合结果可能发生变化。
-
 ### 搜索 Top N 的慢查询
 
 查询 Top 2 的用户慢查询。`is_internal=false` 表示排除 TiDB 内部的慢查询，只看用户的慢查询：
